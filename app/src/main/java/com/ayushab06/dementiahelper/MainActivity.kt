@@ -1,9 +1,11 @@
 package com.ayushab06.dementiahelper
 
 import android.Manifest
+import android.accessibilityservice.AccessibilityService
 import android.app.NotificationChannel
 import android.app.NotificationManager
 import android.content.Context
+import android.content.Intent
 import android.content.pm.PackageManager
 import android.hardware.Sensor
 import android.hardware.SensorEvent
@@ -11,8 +13,11 @@ import android.hardware.SensorEventListener
 import android.hardware.SensorManager
 import android.media.AudioManager
 import android.media.ToneGenerator
+import android.net.Uri
 import android.os.Build
 import android.os.Bundle
+import android.provider.Settings
+import android.text.TextUtils.SimpleStringSplitter
 import android.util.Log
 import android.widget.RemoteViews
 import android.widget.Toast
@@ -23,11 +28,13 @@ import androidx.core.app.NotificationManagerCompat
 import com.google.android.gms.location.FusedLocationProviderClient
 import com.google.android.gms.location.LocationServices
 import kotlinx.android.synthetic.main.activity_main.*
+import java.net.URLEncoder
 import kotlin.math.sqrt
 
 
 class MainActivity : AppCompatActivity(), SensorEventListener {
     private var high = 0.0
+    private val MY_PERMISSIONS_REQUEST_SEND_SMS=1
     private var low = Double.MAX_VALUE
     private var i=0
     private val acc= mutableListOf<Double>()
@@ -39,10 +46,12 @@ class MainActivity : AppCompatActivity(), SensorEventListener {
     private lateinit var fusedLocationClient: FusedLocationProviderClient
     private var latitude: Double = 0.0
     private var longitude: Double = 0.0
+    lateinit var context:Context
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         setContentView(R.layout.activity_main)
-        val sensorManager = getSystemService(Context.SENSOR_SERVICE) as SensorManager
+        val sensorManager = getSystemService(SENSOR_SERVICE) as SensorManager
+        context=this@MainActivity
         val sensor: Sensor? = sensorManager.getDefaultSensor(Sensor.TYPE_ACCELEROMETER)
         fusedLocationClient = LocationServices.getFusedLocationProviderClient(this)
         sensorManager.registerListener(this@MainActivity, sensor, 50000)
@@ -76,7 +85,7 @@ class MainActivity : AppCompatActivity(), SensorEventListener {
                 val toneGen1 = ToneGenerator(AudioManager.STREAM_MUSIC, 100)
                 toneGen1.startTone(ToneGenerator.TONE_CDMA_PIP, 150)
                 tvLow.text = "the low value is $low"
-                Toast.makeText(this@MainActivity, "fall can be detected ", Toast.LENGTH_LONG).show()
+                //Toast.makeText(this@MainActivity, "fall can be detected ", Toast.LENGTH_LONG).show()
                 showNotification()
             }
         }
@@ -96,10 +105,14 @@ class MainActivity : AppCompatActivity(), SensorEventListener {
         return false
     }
     private fun getCurrentLocation() {
-        if (ActivityCompat.checkSelfPermission(this,
-                        Manifest.permission.ACCESS_FINE_LOCATION) != PackageManager.PERMISSION_GRANTED) {
-            ActivityCompat.requestPermissions(this,
-                    arrayOf(Manifest.permission.ACCESS_FINE_LOCATION), LOCATION_PERMISSION_REQ_CODE);
+        if (ActivityCompat.checkSelfPermission(
+                this,
+                Manifest.permission.ACCESS_FINE_LOCATION
+            ) != PackageManager.PERMISSION_GRANTED) {
+            ActivityCompat.requestPermissions(
+                this,
+                arrayOf(Manifest.permission.ACCESS_FINE_LOCATION), LOCATION_PERMISSION_REQ_CODE
+            );
             return
         }
         fusedLocationClient.lastLocation
@@ -108,21 +121,26 @@ class MainActivity : AppCompatActivity(), SensorEventListener {
                     longitude = location.longitude
                 }
                 .addOnFailureListener {
-                    Toast.makeText(this, "Failed on getting current location",
-                            Toast.LENGTH_SHORT).show()
+                    Toast.makeText(
+                        this, "Failed on getting current location",
+                        Toast.LENGTH_SHORT
+                    ).show()
                 }
     }
     override fun onRequestPermissionsResult(
-            requestCode: Int, permissions: Array<out String>, grantResults: IntArray
+        requestCode: Int, permissions: Array<out String>, grantResults: IntArray
     ) {
         super.onRequestPermissionsResult(requestCode, permissions, grantResults)
         when (requestCode) {
             LOCATION_PERMISSION_REQ_CODE -> {
                 if (grantResults.isNotEmpty() &&
-                        grantResults[0] == PackageManager.PERMISSION_GRANTED) {
+                    grantResults[0] == PackageManager.PERMISSION_GRANTED
+                ) {
                 } else {
-                    Toast.makeText(this, "You need to grant permission to access location",
-                            Toast.LENGTH_SHORT).show()
+                    Toast.makeText(
+                        this, "You need to grant permission to access location",
+                        Toast.LENGTH_SHORT
+                    ).show()
                 }
             }
         }
@@ -132,7 +150,7 @@ class MainActivity : AppCompatActivity(), SensorEventListener {
             val name="App Notification"
             val descriptionText="this is your notification"
             val importance=NotificationManager.IMPORTANCE_HIGH
-            val channel=NotificationChannel(CHANNEL_ID,name,importance).apply {
+            val channel=NotificationChannel(CHANNEL_ID, name, importance).apply {
                 description=descriptionText
             }
             val notificationManager=getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
@@ -148,10 +166,84 @@ class MainActivity : AppCompatActivity(), SensorEventListener {
                 .setStyle(NotificationCompat.DecoratedCustomViewStyle())
                 .setCustomContentView(notificationLayout)
                 .setPriority(NotificationCompat.PRIORITY_HIGH)
-        with(NotificationManagerCompat.from(this)){
-            notify(0,builder.build())
+        getCurrentLocation()
+        if (!isAccessibilityOn(context, WhatAppAccessibilityService::class.java)) {
+            val intent = Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS)
+            context.startActivity(intent)
+        }else{
+            val nos=  ArrayList<String>()
+            nos.add("+919149367824")
+            handleActionWhatsApp("i've fallen in a pit", nos)
         }
-
+        with(NotificationManagerCompat.from(this)){
+            notify(0, builder.build())
+        }
     }
+    fun handleActionWhatsApp(message: String, mobile_number: List<String>) {
+        try {
+            val packageManager = applicationContext.packageManager
+            if (mobile_number.isNotEmpty()) {
+                for (i in mobile_number.indices) {
+                    val url =
+                        "https://api.whatsapp.com/send?phone=" + mobile_number.get(i) + "&text=" + URLEncoder.encode(
+                            message,
+                            "UTF-8"
+                        )
+                    val intent = Intent(Intent.ACTION_VIEW)
+                    intent.setPackage("com.whatsapp")
+                    intent.setData(Uri.parse(url))
+                    intent.setFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+                    if (intent.resolveActivity(packageManager) != null) {
+                        applicationContext.startActivity(intent)
+                        Thread.sleep(10000)
+                    } else
+                        Toast.makeText(
+                            applicationContext,
+                            "Whatsapp is not installed",
+                            Toast.LENGTH_SHORT
+                        ).show()
+                }
+            }
+
+        } catch (e: Exception) {
+            Toast.makeText(
+                applicationContext,
+                "Something is not right +${e.message}",
+                Toast.LENGTH_SHORT
+            ).show()
+        }
+    }
+    private fun isAccessibilityOn(
+        context: Context,
+        clazz: Class<out AccessibilityService?>
+    ): Boolean {
+        var accessibilityEnabled = 0
+        val service = context.packageName + "/" + clazz.canonicalName
+        try {
+            accessibilityEnabled = Settings.Secure.getInt(
+                context.applicationContext.contentResolver,
+                Settings.Secure.ACCESSIBILITY_ENABLED
+            )
+        } catch (ignored: Settings.SettingNotFoundException) {
+        }
+        val colonSplitter = SimpleStringSplitter(':')
+        if (accessibilityEnabled == 1) {
+            val settingValue: String = Settings.Secure.getString(
+                context.applicationContext.contentResolver,
+                Settings.Secure.ENABLED_ACCESSIBILITY_SERVICES
+            )
+            if (settingValue != null) {
+                colonSplitter.setString(settingValue)
+                while (colonSplitter.hasNext()) {
+                    val accessibilityService = colonSplitter.next()
+                    if (accessibilityService.equals(service, ignoreCase = true)) {
+                        return true
+                    }
+                }
+            }
+        }
+        return false
+    }
+
 
 }
